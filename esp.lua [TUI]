@@ -1,3 +1,4 @@
+
 -- Auto Tool Equip Script (Client-side)
 -- Creates the GUI panel programmatically using Scale for responsive layout
 -- Cycles through Tool names from itembutton1-40, equipping tools from Backpack/Character
@@ -162,22 +163,60 @@ UserInputService.InputEnded:Connect(function(input)
 end)
 
 -- ========================================================
+-- TROLLMENU ITEM BUTTONS (the real buttons to click)
+-- ========================================================
+
+-- Find TrollMenu ScrollingFrame
+local function getTrollScroll()
+	local trollMenu = playerGui:FindFirstChild("TrollMenu")
+	if not trollMenu then return nil end
+	local items = trollMenu:FindFirstChild("Items")
+	if not items then return nil end
+	local scroll = items:FindFirstChild("ScrollingFrame")
+	return scroll
+end
+
+-- Ensure itembutton1-40 exist in TrollMenu ScrollingFrame, return refs
+local function ensureTrollButtons()
+	local scroll = getTrollScroll()
+	if not scroll then return {} end
+
+	local buttons = {}
+	for i = 1, 40 do
+		local btn = scroll:FindFirstChild("itembutton" .. i)
+		if not btn then
+			btn = Instance.new("TextButton")
+			btn.Name = "itembutton" .. i
+			btn.Text = tostring(i)
+			btn.Size = UDim2.new(0, 200, 0, 50)
+			btn.TextColor3 = Color3.fromRGB(255, 255, 255)
+			btn.TextScaled = true
+			btn.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+			btn.BorderSizePixel = 0
+			btn.Parent = scroll
+		end
+		buttons[i] = btn
+	end
+	return buttons
+end
+
+-- ========================================================
 -- AUTO EQUIP LOGIC
 -- ========================================================
 
--- State
 local autoEquipActive = false
 local equipThread = nil
 
--- Find all tools with a given name in Backpack and Character
+-- Find all tools with a given name (case-insensitive)
 local function findToolsByName(name)
 	local tools = {}
+	local nameLower = string.lower(name)
 	local backpack = player:FindFirstChild("Backpack")
 	local character = player.Character
 
 	if backpack then
 		for _, child in ipairs(backpack:GetChildren()) do
-			if child:IsA("Tool") and child.Name == name then
+			if child:IsA("Tool") and string.lower(child.Name) == nameLower then
 				table.insert(tools, child)
 			end
 		end
@@ -185,7 +224,7 @@ local function findToolsByName(name)
 
 	if character then
 		for _, child in ipairs(character:GetChildren()) do
-			if child:IsA("Tool") and child.Name == name then
+			if child:IsA("Tool") and string.lower(child.Name) == nameLower then
 				table.insert(tools, child)
 			end
 		end
@@ -194,24 +233,14 @@ local function findToolsByName(name)
 	return tools
 end
 
--- Equip a specific tool instance
 local function equipTool(tool)
 	local character = player.Character
 	if not character then return end
 	local humanoid = character:FindFirstChildOfClass("Humanoid")
 	if not humanoid then return end
-
-	local backpack = player:FindFirstChild("Backpack")
-	if backpack and tool.Parent == backpack then
-		humanoid:EquipTool(tool)
-	elseif tool.Parent == character then
-		-- Already equipped
-	else
-		humanoid:EquipTool(tool)
-	end
+	humanoid:EquipTool(tool)
 end
 
--- Unequip any currently held tool
 local function unequipAll()
 	local character = player.Character
 	if not character then return end
@@ -221,50 +250,76 @@ local function unequipAll()
 	end
 end
 
--- Button click handler: equips all tools with the name from the button's TextBox
-local function onButtonItemClick(button)
-	local textBox = button:FindFirstChild("ToolName")
-	if not textBox or textBox.Text == "" then return end
+-- Visual feedback on TrollMenu button: outline border
+local function flashTrollButton(button, color)
+	local origColor = button.BorderColor3
+	local origSize = button.BorderSizePixel
+	button.BorderColor3 = color
+	button.BorderSizePixel = 4
+	task.delay(0.4, function()
+		if button and button.Parent then
+			button.BorderColor3 = origColor
+			button.BorderSizePixel = origSize
+		end
+	end)
+end
 
-	local toolName = textBox.Text
+-- Read Tool name from our panel for button index i
+local function getToolNameForIndex(i)
+	local btn = itemButtons[i]
+	if not btn then return nil end
+	local textBox = btn:FindFirstChild("ToolName")
+	if not textBox or textBox.Text == "" then return nil end
+	return textBox.Text
+end
+
+-- Activate a TrollMenu itembutton: equip the tool named in our panel
+local function activateTrollButton(trollButton, buttonIndex, isAuto)
+	local toolName = getToolNameForIndex(buttonIndex)
+	if not toolName then return end
+
 	local tools = findToolsByName(toolName)
 
 	if #tools > 0 then
+		-- Flash green border on the TrollMenu button
+		flashTrollButton(trollButton, Color3.fromRGB(50, 255, 50))
+
 		for _, tool in ipairs(tools) do
+			if isAuto and not autoEquipActive then return end
 			unequipAll()
 			task.wait(0.15)
 			equipTool(tool)
 			task.wait(0.3)
 		end
+	else
+		-- Flash red border (tool not found)
+		flashTrollButton(trollButton, Color3.fromRGB(255, 50, 50))
+		if isAuto then
+			print("[AutoToolEquip] Tool not found: " .. toolName)
+		end
 	end
 end
 
--- Connect click handler to each button (manual clicks)
-for i, btn in ipairs(itemButtons) do
-	btn.MouseButton1Click:Connect(function()
-		onButtonItemClick(btn)
-	end)
-end
-
--- Main cycling loop: simulates clicking each button in order
+-- Main cycling loop: activates each TrollMenu itembutton that has a Tool name in our panel
 local function runEquipCycle()
 	while autoEquipActive do
+		local trollButtons = ensureTrollButtons()
+
 		for i = 1, 40 do
 			if not autoEquipActive then return end
 
-			local btn = itemButtons[i]
-			if btn then
-				local textBox = btn:FindFirstChild("ToolName")
-				if textBox and textBox.Text ~= "" then
-					-- Simulate clicking this button
-					onButtonItemClick(btn)
+			local toolName = getToolNameForIndex(i)
+			if toolName then
+				local trollBtn = trollButtons[i]
+				if trollBtn then
+					print("[AutoToolEquip] Activating TrollMenu itembutton" .. i .. " for Tool: " .. toolName)
+					activateTrollButton(trollBtn, i, true)
 				end
 			end
 
 			task.wait(0.1)
 		end
 
-		-- Small pause between full cycles
 		task.wait(0.2)
 	end
 end
@@ -276,22 +331,28 @@ toggleBtn.MouseButton1Click:Connect(function()
 	if autoEquipActive then
 		toggleBtn.BackgroundColor3 = Color3.fromRGB(50, 200, 50)
 		toggleBtn.Text = "AUTO EQUIP: ON"
-
-		-- Start cycling in a new thread
 		equipThread = task.spawn(function()
 			runEquipCycle()
 		end)
 	else
 		toggleBtn.BackgroundColor3 = Color3.fromRGB(200, 50, 50)
 		toggleBtn.Text = "AUTO EQUIP: OFF"
-
-		-- Stop the thread
 		equipThread = nil
 	end
 end)
 
--- Re-create GUI if character respawns (TrollMenu persists, but just in case)
+-- Manual click on our panel buttons also activates corresponding TrollMenu button
+for i, btn in ipairs(itemButtons) do
+	btn.MouseButton1Click:Connect(function()
+		local trollButtons = ensureTrollButtons()
+		local trollBtn = trollButtons[i]
+		if trollBtn then
+			activateTrollButton(trollBtn, i, false)
+		end
+	end)
+end
+
+-- Cleanup on character respawn
 player.CharacterAdded:Connect(function()
-	-- Reset state on new character
 	unequipAll()
 end)
