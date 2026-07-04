@@ -1,3 +1,4 @@
+
 -- Auto Tool Equip Script (Client-side)
 -- Creates the GUI panel programmatically using Scale for responsive layout
 -- Cycles through Tool names from itembutton1-40, equipping tools from Backpack/Character
@@ -9,17 +10,21 @@ local player = Players.LocalPlayer
 local playerGui = player:WaitForChild("PlayerGui")
 
 -- ========================================================
--- GUI CREATION (all using Scale)
+-- GUI CREATION (all using Scale, independent ScreenGui)
 -- ========================================================
 
--- Find or wait for TrollMenu ScreenGui
-local trollMenu = playerGui:WaitForChild("TrollMenu")
-
--- Remove old Items frame if it exists (prevent duplicates on respawn)
-local oldItems = trollMenu:FindFirstChild("Items")
-if oldItems then
-	oldItems.Parent = nil
+-- Remove old GUI if it exists (prevent duplicates on respawn)
+local oldGui = playerGui:FindFirstChild("AutoToolEquipGui")
+if oldGui then
+	oldGui.Parent = nil
 end
+
+-- Create standalone ScreenGui
+local screenGui = Instance.new("ScreenGui")
+screenGui.Name = "AutoToolEquipGui"
+screenGui.ResetOnSpawn = false
+screenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+screenGui.Parent = playerGui
 
 -- Main Items Frame (draggable panel)
 local itemsFrame = Instance.new("Frame")
@@ -30,7 +35,7 @@ itemsFrame.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
 itemsFrame.BackgroundTransparency = 0.1
 itemsFrame.BorderSizePixel = 2
 itemsFrame.BorderColor3 = Color3.fromRGB(100, 100, 100)
-itemsFrame.Parent = trollMenu
+itemsFrame.Parent = screenGui
 
 -- Title Bar (also the drag handle)
 local title = Instance.new("TextLabel")
