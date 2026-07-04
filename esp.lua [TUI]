@@ -1,4 +1,3 @@
-
 -- Auto Tool Equip Script (Client-side)
 -- Creates the GUI panel programmatically using Scale for responsive layout
 -- Cycles through Tool names from itembutton1-40, equipping tools from Backpack/Character
@@ -83,14 +82,19 @@ gridLayout.VerticalAlignment = Enum.VerticalAlignment.Center
 gridLayout.SortOrder = Enum.SortOrder.LayoutOrder
 gridLayout.Parent = gridContainer
 
--- Create 40 item buttons (5 per row, 8 rows)
+-- Table of button references
+local itemButtons = {}
+
+-- Create 40 item buttons (5 per row, 8 rows) as clickable TextButtons
 for i = 1, 40 do
-	local cell = Instance.new("Frame")
+	local cell = Instance.new("TextButton")
 	cell.Name = "itembutton" .. i
 	cell.LayoutOrder = i
+	cell.Text = ""
 	cell.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
 	cell.BorderSizePixel = 1
 	cell.BorderColor3 = Color3.fromRGB(70, 70, 70)
+	cell.AutoButtonColor = true
 	cell.Parent = gridContainer
 
 	-- Number label at top
@@ -119,6 +123,8 @@ for i = 1, 40 do
 	textBox.TextScaled = true
 	textBox.ClearTextOnFocus = false
 	textBox.Parent = cell
+
+	itemButtons[i] = cell
 end
 
 -- ========================================================
@@ -163,21 +169,6 @@ end)
 local autoEquipActive = false
 local equipThread = nil
 
--- Read tool names from the 40 item buttons in order
-local function getToolNameList()
-	local names = {}
-	for i = 1, 40 do
-		local btn = gridContainer:FindFirstChild("itembutton" .. i)
-		if btn then
-			local textBox = btn:FindFirstChild("ToolName")
-			if textBox and textBox.Text ~= "" and textBox.Text ~= nil then
-				table.insert(names, textBox.Text)
-			end
-		end
-	end
-	return names
-end
-
 -- Find all tools with a given name in Backpack and Character
 local function findToolsByName(name)
 	local tools = {}
@@ -210,7 +201,6 @@ local function equipTool(tool)
 	local humanoid = character:FindFirstChildOfClass("Humanoid")
 	if not humanoid then return end
 
-	-- If tool is in Backpack, equip it
 	local backpack = player:FindFirstChild("Backpack")
 	if backpack and tool.Parent == backpack then
 		humanoid:EquipTool(tool)
@@ -231,39 +221,47 @@ local function unequipAll()
 	end
 end
 
--- Main cycling loop
+-- Button click handler: equips all tools with the name from the button's TextBox
+local function onButtonItemClick(button)
+	local textBox = button:FindFirstChild("ToolName")
+	if not textBox or textBox.Text == "" then return end
+
+	local toolName = textBox.Text
+	local tools = findToolsByName(toolName)
+
+	if #tools > 0 then
+		for _, tool in ipairs(tools) do
+			unequipAll()
+			task.wait(0.15)
+			equipTool(tool)
+			task.wait(0.3)
+		end
+	end
+end
+
+-- Connect click handler to each button (manual clicks)
+for i, btn in ipairs(itemButtons) do
+	btn.MouseButton1Click:Connect(function()
+		onButtonItemClick(btn)
+	end)
+end
+
+-- Main cycling loop: simulates clicking each button in order
 local function runEquipCycle()
 	while autoEquipActive do
-		local nameList = getToolNameList()
-
-		if #nameList == 0 then
-			task.wait(0.5)
-			continue
-		end
-
-		for _, toolName in ipairs(nameList) do
+		for i = 1, 40 do
 			if not autoEquipActive then return end
 
-			-- Find all tools with this name
-			local tools = findToolsByName(toolName)
-
-			if #tools > 0 then
-				-- Equip each tool with this name one by one
-				for _, tool in ipairs(tools) do
-					if not autoEquipActive then return end
-
-					-- Unequip current tool first
-					unequipAll()
-					task.wait(0.15)
-
-					-- Equip this tool
-					equipTool(tool)
-					task.wait(0.3)
+			local btn = itemButtons[i]
+			if btn then
+				local textBox = btn:FindFirstChild("ToolName")
+				if textBox and textBox.Text ~= "" then
+					-- Simulate clicking this button
+					onButtonItemClick(btn)
 				end
-			else
-				-- No tool with this name found, skip
-				task.wait(0.1)
 			end
+
+			task.wait(0.1)
 		end
 
 		-- Small pause between full cycles
