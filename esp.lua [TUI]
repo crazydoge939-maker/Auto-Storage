@@ -1,0 +1,294 @@
+-- Auto Tool Equip Script (Client-side)
+-- Creates the GUI panel programmatically using Scale for responsive layout
+-- Cycles through Tool names from itembutton1-40, equipping tools from Backpack/Character
+-- If multiple tools share the same name, equips each one before moving to the next name
+
+local Players = game:GetService("Players")
+local UserInputService = game:GetService("UserInputService")
+local player = Players.LocalPlayer
+local playerGui = player:WaitForChild("PlayerGui")
+
+-- ========================================================
+-- GUI CREATION (all using Scale)
+-- ========================================================
+
+-- Find or wait for TrollMenu ScreenGui
+local trollMenu = playerGui:WaitForChild("TrollMenu")
+
+-- Remove old Items frame if it exists (prevent duplicates on respawn)
+local oldItems = trollMenu:FindFirstChild("Items")
+if oldItems then
+	oldItems.Parent = nil
+end
+
+-- Main Items Frame (draggable panel)
+local itemsFrame = Instance.new("Frame")
+itemsFrame.Name = "Items"
+itemsFrame.Size = UDim2.new(0.25, 0, 0.5, 0)
+itemsFrame.Position = UDim2.new(0.375, 0, 0.25, 0)
+itemsFrame.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
+itemsFrame.BackgroundTransparency = 0.1
+itemsFrame.BorderSizePixel = 2
+itemsFrame.BorderColor3 = Color3.fromRGB(100, 100, 100)
+itemsFrame.Parent = trollMenu
+
+-- Title Bar (also the drag handle)
+local title = Instance.new("TextLabel")
+title.Name = "Title"
+title.Size = UDim2.new(1, 0, 0.06, 0)
+title.Position = UDim2.new(0, 0, 0, 0)
+title.BackgroundColor3 = Color3.fromRGB(50, 50, 50)
+title.Text = "Auto Tool Equip"
+title.TextColor3 = Color3.fromRGB(255, 255, 255)
+title.Font = Enum.Font.SourceSansBold
+title.TextScaled = true
+title.Parent = itemsFrame
+
+-- Toggle Button
+local toggleBtn = Instance.new("TextButton")
+toggleBtn.Name = "ToggleButton"
+toggleBtn.Size = UDim2.new(0.9, 0, 0.07, 0)
+toggleBtn.Position = UDim2.new(0.05, 0, 0.07, 0)
+toggleBtn.BackgroundColor3 = Color3.fromRGB(200, 50, 50)
+toggleBtn.Text = "AUTO EQUIP: OFF"
+toggleBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+toggleBtn.Font = Enum.Font.SourceSansBold
+toggleBtn.TextScaled = true
+toggleBtn.BorderSizePixel = 2
+toggleBtn.BorderColor3 = Color3.fromRGB(150, 150, 150)
+toggleBtn.Parent = itemsFrame
+
+-- ScrollingFrame
+-- Grid container (no scroll, fixed grid 5x8)
+local gridContainer = Instance.new("Frame")
+gridContainer.Name = "ToolGrid"
+gridContainer.Size = UDim2.new(0.92, 0, 0.83, 0)
+gridContainer.Position = UDim2.new(0.04, 0, 0.16, 0)
+gridContainer.BackgroundColor3 = Color3.fromRGB(20, 20, 20)
+gridContainer.BorderSizePixel = 1
+gridContainer.BorderColor3 = Color3.fromRGB(80, 80, 80)
+gridContainer.Parent = itemsFrame
+
+-- UIGridLayout 5 columns x 8 rows
+local gridLayout = Instance.new("UIGridLayout")
+gridLayout.CellSize = UDim2.new(0.18, 0, 0.115, 0)
+gridLayout.CellPadding = UDim2.new(0.01, 0, 0.01, 0)
+gridLayout.HorizontalAlignment = Enum.HorizontalAlignment.Center
+gridLayout.VerticalAlignment = Enum.VerticalAlignment.Center
+gridLayout.SortOrder = Enum.SortOrder.LayoutOrder
+gridLayout.Parent = gridContainer
+
+-- Create 40 item buttons (5 per row, 8 rows)
+for i = 1, 40 do
+	local cell = Instance.new("Frame")
+	cell.Name = "itembutton" .. i
+	cell.LayoutOrder = i
+	cell.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
+	cell.BorderSizePixel = 1
+	cell.BorderColor3 = Color3.fromRGB(70, 70, 70)
+	cell.Parent = gridContainer
+
+	-- Number label at top
+	local label = Instance.new("TextLabel")
+	label.Name = "Index"
+	label.Size = UDim2.new(1, 0, 0.3, 0)
+	label.Position = UDim2.new(0, 0, 0, 0)
+	label.BackgroundColor3 = Color3.fromRGB(60, 60, 60)
+	label.Text = tostring(i)
+	label.TextColor3 = Color3.fromRGB(200, 200, 200)
+	label.Font = Enum.Font.SourceSansBold
+	label.TextScaled = true
+	label.Parent = cell
+
+	-- TextBox below the number
+	local textBox = Instance.new("TextBox")
+	textBox.Name = "ToolName"
+	textBox.Size = UDim2.new(1, 0, 0.7, 0)
+	textBox.Position = UDim2.new(0, 0, 0.3, 0)
+	textBox.BackgroundColor3 = Color3.fromRGB(25, 25, 25)
+	textBox.Text = ""
+	textBox.PlaceholderText = "..."
+	textBox.PlaceholderColor3 = Color3.fromRGB(120, 120, 120)
+	textBox.TextColor3 = Color3.fromRGB(255, 255, 255)
+	textBox.Font = Enum.Font.SourceSans
+	textBox.TextScaled = true
+	textBox.ClearTextOnFocus = false
+	textBox.Parent = cell
+end
+
+-- ========================================================
+-- DRAG FUNCTIONALITY
+-- ========================================================
+
+local dragging = false
+local dragStart = nil
+local startPos = nil
+
+title.InputBegan:Connect(function(input)
+	if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+		dragging = true
+		dragStart = input.Position
+		startPos = itemsFrame.Position
+	end
+end)
+
+UserInputService.InputChanged:Connect(function(input)
+	if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
+		local delta = input.Position - dragStart
+		itemsFrame.Position = UDim2.new(
+			startPos.X.Scale,
+			startPos.X.Offset + delta.X,
+			startPos.Y.Scale,
+			startPos.Y.Offset + delta.Y
+		)
+	end
+end)
+
+UserInputService.InputEnded:Connect(function(input)
+	if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+		dragging = false
+	end
+end)
+
+-- ========================================================
+-- AUTO EQUIP LOGIC
+-- ========================================================
+
+-- State
+local autoEquipActive = false
+local equipThread = nil
+
+-- Read tool names from the 40 item buttons in order
+local function getToolNameList()
+	local names = {}
+	for i = 1, 40 do
+		local btn = gridContainer:FindFirstChild("itembutton" .. i)
+		if btn then
+			local textBox = btn:FindFirstChild("ToolName")
+			if textBox and textBox.Text ~= "" and textBox.Text ~= nil then
+				table.insert(names, textBox.Text)
+			end
+		end
+	end
+	return names
+end
+
+-- Find all tools with a given name in Backpack and Character
+local function findToolsByName(name)
+	local tools = {}
+	local backpack = player:FindFirstChild("Backpack")
+	local character = player.Character
+
+	if backpack then
+		for _, child in ipairs(backpack:GetChildren()) do
+			if child:IsA("Tool") and child.Name == name then
+				table.insert(tools, child)
+			end
+		end
+	end
+
+	if character then
+		for _, child in ipairs(character:GetChildren()) do
+			if child:IsA("Tool") and child.Name == name then
+				table.insert(tools, child)
+			end
+		end
+	end
+
+	return tools
+end
+
+-- Equip a specific tool instance
+local function equipTool(tool)
+	local character = player.Character
+	if not character then return end
+	local humanoid = character:FindFirstChildOfClass("Humanoid")
+	if not humanoid then return end
+
+	-- If tool is in Backpack, equip it
+	local backpack = player:FindFirstChild("Backpack")
+	if backpack and tool.Parent == backpack then
+		humanoid:EquipTool(tool)
+	elseif tool.Parent == character then
+		-- Already equipped
+	else
+		humanoid:EquipTool(tool)
+	end
+end
+
+-- Unequip any currently held tool
+local function unequipAll()
+	local character = player.Character
+	if not character then return end
+	local humanoid = character:FindFirstChildOfClass("Humanoid")
+	if humanoid then
+		humanoid:UnequipTools()
+	end
+end
+
+-- Main cycling loop
+local function runEquipCycle()
+	while autoEquipActive do
+		local nameList = getToolNameList()
+
+		if #nameList == 0 then
+			task.wait(0.5)
+			continue
+		end
+
+		for _, toolName in ipairs(nameList) do
+			if not autoEquipActive then return end
+
+			-- Find all tools with this name
+			local tools = findToolsByName(toolName)
+
+			if #tools > 0 then
+				-- Equip each tool with this name one by one
+				for _, tool in ipairs(tools) do
+					if not autoEquipActive then return end
+
+					-- Unequip current tool first
+					unequipAll()
+					task.wait(0.15)
+
+					-- Equip this tool
+					equipTool(tool)
+					task.wait(0.3)
+				end
+			else
+				-- No tool with this name found, skip
+				task.wait(0.1)
+			end
+		end
+
+		-- Small pause between full cycles
+		task.wait(0.2)
+	end
+end
+
+-- Toggle button handler
+toggleBtn.MouseButton1Click:Connect(function()
+	autoEquipActive = not autoEquipActive
+
+	if autoEquipActive then
+		toggleBtn.BackgroundColor3 = Color3.fromRGB(50, 200, 50)
+		toggleBtn.Text = "AUTO EQUIP: ON"
+
+		-- Start cycling in a new thread
+		equipThread = task.spawn(function()
+			runEquipCycle()
+		end)
+	else
+		toggleBtn.BackgroundColor3 = Color3.fromRGB(200, 50, 50)
+		toggleBtn.Text = "AUTO EQUIP: OFF"
+
+		-- Stop the thread
+		equipThread = nil
+	end
+end)
+
+-- Re-create GUI if character respawns (TrollMenu persists, but just in case)
+player.CharacterAdded:Connect(function()
+	-- Reset state on new character
+	unequipAll()
+end)
