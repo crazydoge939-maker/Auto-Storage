@@ -1,118 +1,459 @@
-
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local UserInputService = game:GetService("UserInputService")
 
-local remote = ReplicatedStorage:FindFirstChild("ToolRestorationEvent")
+local player = Players.LocalPlayer
+local playerGui = player:WaitForChild("PlayerGui")
 
--- Хранилище: playerId -> { [slotIndex] = { name = string, tools = {Tool1, Tool2, ...} } }
-local storage = {}
-local NUM_SLOTS = 40
+-- RemoteEvent для общения с сервером (хранение инструментов)
+local toolRemote = ReplicatedStorage:FindFirstChild("ToolRestorationEvent")
 
-local function getStorage(player)
-    if not storage[player.UserId] then
-        storage[player.UserId] = {}
-    end
-    return storage[player.UserId]
-end
+-- Colors
+local COL_BG     = Color3.fromRGB(22, 24, 30)
+local COL_TITLE  = Color3.fromRGB(35, 38, 48)
+local COL_ENTRY  = Color3.fromRGB(38, 42, 52)
+local COL_NUM    = Color3.fromRGB(55, 60, 72)
+local COL_ACCENT = Color3.fromRGB(88, 166, 255)
+local COL_RED    = Color3.fromRGB(220, 70, 70)
+local COL_GREEN  = Color3.fromRGB(60, 200, 80)
+local COL_TEXT   = Color3.fromRGB(235, 238, 245)
+local COL_DIM    = Color3.fromRGB(150, 155, 165)
 
-local function sendUpdate(player)
-    local s = getStorage(player)
-    local list = {}
-    for i = 1, NUM_SLOTS do
-        local slot = s[i]
-        if slot and #slot.tools > 0 then
-            list[i] = { name = slot.name, count = #slot.tools }
-        else
-            list[i] = { name = "", count = 0 }
-        end
-    end
-    remote:FireClient(player, "update", list)
-end
+-- ============================================================
+-- Helper: make any GuiObject draggable
+-- ============================================================
+local function makeDraggable(guiObject, dragTarget)
+    dragTarget = dragTarget or guiObject
+    local dragging = false
+    local dragStart, startPos
 
-local function onPlayerAdded(player)
-    storage[player.UserId] = {}
-
-    remote.OnServerEvent:Connect(function(plr, action, data)
-        if plr ~= player then return end
-
-        local s = getStorage(player)
-
-        if action == "requestList" then
-            sendUpdate(player)
-
-        elseif action == "store" then
-            -- data = { tool = ToolInstance, slot = number }
-            if type(data) ~= "table" then return end
-            local tool = data.tool
-            local slotIndex = data.slot
-            if typeof(tool) ~= "Instance" or not tool:IsA("Tool") then return end
-            if tool.Parent ~= player.Character then return end
-            if type(slotIndex) ~= "number" or slotIndex < 1 or slotIndex > NUM_SLOTS then return end
-
-            local slot = s[slotIndex]
-            if not slot then
-                -- Пустой слот — создаём новый стек
-                slot = { name = tool.Name, tools = {} }
-                s[slotIndex] = slot
-            elseif slot.name ~= tool.Name then
-                -- В слоте лежит другой инструмент — не позволяем смешивать
-                return
-            end
-
-            -- Добавляем инструмент в стек
-            tool.Parent = nil
-            table.insert(slot.tools, tool)
-            sendUpdate(player)
-
-        elseif action == "retrieve" then
-            -- data = slot index (number)
-            local slotIndex = data
-            if type(slotIndex) ~= "number" or slotIndex < 1 or slotIndex > NUM_SLOTS then return end
-
-            -- Проверяем, что игрок не держит Tool
-            local character = player.Character
-            if not character then return end
-            local holding = false
-            for _, child in ipairs(character:GetChildren()) do
-                if child:IsA("Tool") then
-                    holding = true
-                    break
-                end
-            end
-            if holding then return end
-
-            local slot = s[slotIndex]
-            if slot and #slot.tools > 0 then
-                local tool = table.remove(slot.tools, #slot.tools)
-                if tool and tool.Parent == nil then
-                    tool.Parent = character
-                    sendUpdate(player)
-                end
-            end
+    dragTarget.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 then
+            dragging = true
+            dragStart = input.Position
+            startPos = guiObject.Position
         end
     end)
+    UserInputService.InputChanged:Connect(function(input)
+        if dragging and input.UserInputType == Enum.UserInputType.MouseMovement then
+            local delta = input.Position - dragStart
+            guiObject.Position = UDim2.new(
+                startPos.X.Scale, startPos.X.Offset + delta.X,
+                startPos.Y.Scale, startPos.Y.Offset + delta.Y
+            )
+        end
+    end)
+    UserInputService.InputEnded:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 then
+            dragging = false
+        end
+    end)
+end
 
-    -- Очистка при выходе игрока
-    player.AncestryChanged:Connect(function(_, newParent)
-        if not newParent then
-            local s = storage[player.UserId]
-            if s then
-                for _, slot in pairs(s) do
-                    if slot and slot.tools then
-                        for _, tool in ipairs(slot.tools) do
-                            if tool and tool.Parent == nil then
-                                tool:Destroy()
-                            end
-                        end
+-- ============================================================
+-- Build the GUI
+-- ============================================================
+
+local screenGui = Instance.new("ScreenGui")
+screenGui.Name = "AutoStorePanel"
+screenGui.ResetOnSpawn = false
+screenGui.DisplayOrder = 100
+screenGui.Parent = playerGui
+
+-- ---- Open / Close toggle button ----
+local toggleBtn = Instance.new("TextButton")
+toggleBtn.Name = "ToggleBtn"
+toggleBtn.Size = UDim2.new(0, 120, 0, 28)
+toggleBtn.Position = UDim2.new(0, 15, 0, 15)
+toggleBtn.BackgroundColor3 = COL_ACCENT
+toggleBtn.Text = "📋 Panel"
+toggleBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+toggleBtn.Font = Enum.Font.GothamBold
+toggleBtn.TextSize = 12
+toggleBtn.BorderSizePixel = 0
+toggleBtn.Parent = screenGui
+
+local btnCorner = Instance.new("UICorner")
+btnCorner.CornerRadius = UDim.new(0, 6)
+btnCorner.Parent = toggleBtn
+
+makeDraggable(toggleBtn, toggleBtn)
+
+-- ---- Main Panel ----
+local mainFrame = Instance.new("Frame")
+mainFrame.Name = "MainFrame"
+mainFrame.Size = UDim2.new(0, 510, 0, 335)
+mainFrame.Position = UDim2.new(0.5, -255, 0.5, -167)
+mainFrame.BackgroundColor3 = COL_BG
+mainFrame.BorderSizePixel = 0
+mainFrame.Active = true
+mainFrame.Visible = false
+mainFrame.Parent = screenGui
+
+local mainCorner = Instance.new("UICorner")
+mainCorner.CornerRadius = UDim.new(0, 8)
+mainCorner.Parent = mainFrame
+
+local mainStroke = Instance.new("UIStroke")
+mainStroke.Color = Color3.fromRGB(50, 55, 68)
+mainStroke.Thickness = 1
+mainStroke.Parent = mainFrame
+
+-- Title bar
+local titleBar = Instance.new("Frame")
+titleBar.Name = "TitleBar"
+titleBar.Size = UDim2.new(1, 0, 0, 30)
+titleBar.BackgroundColor3 = COL_TITLE
+titleBar.BorderSizePixel = 0
+titleBar.Parent = mainFrame
+
+local titleCorner = Instance.new("UICorner")
+titleCorner.CornerRadius = UDim.new(0, 8)
+titleCorner.Parent = titleBar
+
+local title = Instance.new("TextLabel")
+title.Size = UDim2.new(0, 160, 1, 0)
+title.BackgroundTransparency = 1
+title.Text = "  Auto Store Panel"
+title.TextColor3 = COL_TEXT
+title.Font = Enum.Font.GothamBold
+title.TextSize = 13
+title.TextXAlignment = Enum.TextXAlignment.Left
+title.Position = UDim2.new(0, 0, 0, 0)
+title.Parent = titleBar
+
+-- Close button (X)
+local closeBtn = Instance.new("TextButton")
+closeBtn.Name = "CloseBtn"
+closeBtn.Size = UDim2.new(0, 28, 0, 22)
+closeBtn.Position = UDim2.new(1, -30, 0, 4)
+closeBtn.BackgroundColor3 = COL_RED
+closeBtn.Text = "✕"
+closeBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+closeBtn.Font = Enum.Font.GothamBold
+closeBtn.TextSize = 12
+closeBtn.BorderSizePixel = 0
+closeBtn.Parent = titleBar
+
+local closeCorner = Instance.new("UICorner")
+closeCorner.CornerRadius = UDim.new(0, 4)
+closeCorner.Parent = closeBtn
+
+-- Auto toggle button
+local autoBtn = Instance.new("TextButton")
+autoBtn.Name = "AutoToggle"
+autoBtn.Size = UDim2.new(0, 95, 0, 22)
+autoBtn.Position = UDim2.new(1, -132, 0, 4)
+autoBtn.BackgroundColor3 = COL_RED
+autoBtn.Text = "Auto: OFF"
+autoBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+autoBtn.Font = Enum.Font.GothamBold
+autoBtn.TextSize = 10
+autoBtn.BorderSizePixel = 0
+autoBtn.Parent = titleBar
+
+local autoCorner = Instance.new("UICorner")
+autoCorner.CornerRadius = UDim.new(0, 4)
+autoCorner.Parent = autoBtn
+
+-- Status label
+local statusLabel = Instance.new("TextLabel")
+statusLabel.Size = UDim2.new(0, 120, 0, 20)
+statusLabel.Position = UDim2.new(0, 170, 0, 6)
+statusLabel.BackgroundTransparency = 1
+statusLabel.Text = ""
+statusLabel.TextColor3 = COL_DIM
+statusLabel.Font = Enum.Font.Gotham
+statusLabel.TextSize = 10
+statusLabel.TextXAlignment = Enum.TextXAlignment.Left
+statusLabel.Parent = titleBar
+
+-- Make panel draggable via title bar
+makeDraggable(mainFrame, titleBar)
+
+-- Toggle button logic
+toggleBtn.MouseButton1Click:Connect(function()
+    mainFrame.Visible = not mainFrame.Visible
+end)
+closeBtn.MouseButton1Click:Connect(function()
+    mainFrame.Visible = false
+end)
+
+-- ---- Entries container ----
+local entriesFrame = Instance.new("Frame")
+entriesFrame.Name = "Entries"
+entriesFrame.Size = UDim2.new(1, -12, 1, -38)
+entriesFrame.Position = UDim2.new(0, 6, 0, 33)
+entriesFrame.BackgroundTransparency = 1
+entriesFrame.Parent = mainFrame
+
+local grid = Instance.new("UIGridLayout")
+grid.CellSize = UDim2.new(0, 95, 0, 28)
+grid.CellPadding = UDim2.new(0, 3, 0, 3)
+grid.FillDirectionMaxCells = 5
+grid.SortOrder = Enum.SortOrder.LayoutOrder
+grid.Parent = entriesFrame
+
+-- Pre-filled default tool names (still editable at any time)
+local defaultTools = {
+	[1] = "",
+	[2] = "",
+	[3] = "",
+	[4] = "",
+	[5] = "",
+	[6] = "",
+	[7] = "",
+	[8] = "",
+	[9] = "",
+	[10] = "",
+	[11] = "",
+	[12] = "",
+	[13] = "",
+	[14] = "",
+	[15] = "",
+	[16] = "",
+	[17] = "",
+	[18] = "",
+	[19] = "",
+	[20] = "",
+	[21] = "",
+	[22] = "",
+	[23] = "",
+	[24] = "",
+	[25] = "",
+	[26] = "",
+	[27] = "",
+	[28] = "",
+	[29] = "",
+	[30] = "",
+	[31] = "",
+	[32] = "",
+	[33] = "",
+	[34] = "",
+	[35] = "",
+	[36] = "",
+	[37] = "",
+	[38] = "",
+	[39] = "",
+    [40] = "",
+}
+
+-- Create 40 entries (5 columns x 8 rows)
+local entries = {}
+for i = 1, 40 do
+    local entry = Instance.new("Frame")
+    entry.Name = "Entry" .. i
+    entry.BackgroundColor3 = COL_ENTRY
+    entry.BorderSizePixel = 0
+    entry.LayoutOrder = i
+    entry.Parent = entriesFrame
+
+    local entryCorner = Instance.new("UICorner")
+    entryCorner.CornerRadius = UDim.new(0, 4)
+    entryCorner.Parent = entry
+
+    local numLabel = Instance.new("TextLabel")
+    numLabel.Size = UDim2.new(0, 20, 1, 0)
+    numLabel.BackgroundColor3 = COL_NUM
+    numLabel.Text = tostring(i)
+    numLabel.TextColor3 = COL_DIM
+    numLabel.Font = Enum.Font.GothamBold
+    numLabel.TextSize = 9
+    numLabel.BorderSizePixel = 0
+    numLabel.Parent = entry
+
+    local numCorner = Instance.new("UICorner")
+    numCorner.CornerRadius = UDim.new(0, 4)
+    numCorner.Parent = numLabel
+
+    local defaultName = defaultTools[i] or ""
+
+    local textBox = Instance.new("TextBox")
+    textBox.Size = UDim2.new(1, -24, 1, -4)
+    textBox.Position = UDim2.new(0, 22, 0, 2)
+    textBox.BackgroundTransparency = 1
+    textBox.Text = defaultName
+    textBox.PlaceholderText = "Tool"
+    textBox.TextColor3 = COL_TEXT
+    textBox.PlaceholderColor3 = Color3.fromRGB(110, 115, 125)
+    textBox.Font = Enum.Font.Gotham
+    textBox.TextSize = 9
+    textBox.TextXAlignment = Enum.TextXAlignment.Left
+    textBox.ClearTextOnFocus = false
+    textBox.Parent = entry
+
+    entries[i] = {
+        frame = entry,
+        textBox = textBox,
+        toolName = defaultName,
+    }
+
+    textBox:GetPropertyChangedSignal("Text"):Connect(function()
+        entries[i].toolName = textBox.Text
+    end)
+end
+
+-- ============================================================
+-- Helpers
+-- ============================================================
+
+-- Find the first available Tool with the given name (checks backpack, then equipped)
+local function findToolByName(name)
+    if not name or name == "" then return nil end
+    local character = player.Character
+    local backpack = player:FindFirstChild("Backpack")
+
+    if backpack then
+        for _, child in ipairs(backpack:GetChildren()) do
+            if child:IsA("Tool") and child.Name == name then
+                return child
+            end
+        end
+    end
+
+    if character then
+        for _, child in ipairs(character:GetChildren()) do
+            if child:IsA("Tool") and child.Name == name then
+                return child
+            end
+        end
+    end
+
+    return nil
+end
+
+-- Get the currently held tool (equipped in character)
+local function getHeldTool()
+    local character = player.Character
+    if not character then return nil end
+    for _, child in ipairs(character:GetChildren()) do
+        if child:IsA("Tool") then
+            return child
+        end
+    end
+    return nil
+end
+
+-- Equip a tool from backpack into the character's hands
+local function equipTool(tool)
+    local character = player.Character
+    if not character then return false end
+    local humanoid = character:FindFirstChildOfClass("Humanoid")
+    if humanoid and tool.Parent ~= character then
+        humanoid:EquipTool(tool)
+    end
+    return true
+end
+
+-- Store the held tool into TrollMenu slot slotIndex
+local function storeToSlot(slotIndex)
+    local held = getHeldTool()
+    if held and toolRemote then
+        toolRemote:FireServer("store", { tool = held, slot = slotIndex })
+        return true
+    end
+    return false
+end
+
+-- Highlight an entry while it is being processed
+local function setHighlight(i, on)
+    local entry = entries[i]
+    if entry and entry.frame then
+        entry.frame.BackgroundColor3 = on and COL_GREEN or COL_ENTRY
+    end
+end
+
+-- ============================================================
+-- Auto-store process
+-- ============================================================
+
+local autoActive = false
+
+local function runAutoProcess()
+    while autoActive do
+        local didSomething = false
+
+        for i = 1, 40 do
+            if not autoActive then break end
+
+            local toolName = entries[i].toolName
+            if toolName and toolName ~= "" then
+                -- Keep storing ALL tools with this name until none are left
+                local storedCount = 0
+                while autoActive do
+                    local tool = findToolByName(toolName)
+                    if not tool then break end
+
+                    setHighlight(i, true)
+                    statusLabel.Text = "Slot " .. i .. ": " .. toolName .. " (" .. (storedCount + 1) .. ")"
+
+                    -- Equip the tool if it is in the backpack
+                    local character = player.Character
+                    local backpack = player:FindFirstChild("Backpack")
+                    if character and backpack and tool.Parent == backpack then
+                        equipTool(tool)
+                        task.wait(0.3)
                     end
+
+                    -- Store it into the TrollMenu slot
+                    if storeToSlot(i) then
+                        -- Wait for the server to process and remove the tool
+                        local maxWait = 2.0
+                        local waited = 0.0
+                        while waited < maxWait and autoActive do
+                            local stillHeld = false
+                            if character then
+                                for _, child in ipairs(character:GetChildren()) do
+                                    if child == tool then
+                                        stillHeld = true
+                                        break
+                                    end
+                                end
+                            end
+                            if not stillHeld then break end
+                            task.wait(0.1)
+                            waited += 0.1
+                        end
+                        storedCount += 1
+                        didSomething = true
+                    else
+                        break
+                    end
+
+                    task.wait(0.15)
+                end
+
+                setHighlight(i, false)
+
+                if storedCount > 0 then
+                    statusLabel.Text = "Slot " .. i .. ": stored " .. storedCount .. "x " .. toolName
+                    task.wait(0.3)
                 end
             end
-            storage[player.UserId] = nil
         end
-    end)
+
+        if not autoActive then break end
+
+        if not didSomething then
+            statusLabel.Text = "Waiting for tools..."
+            task.wait(1)
+        else
+            statusLabel.Text = "Cycle complete"
+            task.wait(0.5)
+        end
+    end
+
+    statusLabel.Text = ""
 end
 
-Players.PlayerAdded:Connect(onPlayerAdded)
-for _, p in ipairs(Players:GetPlayers()) do
-    onPlayerAdded(p)
-end
+autoBtn.MouseButton1Click:Connect(function()
+    autoActive = not autoActive
+    if autoActive then
+        autoBtn.BackgroundColor3 = COL_GREEN
+        autoBtn.Text = "Auto: ON"
+        task.spawn(runAutoProcess)
+    else
+        autoBtn.BackgroundColor3 = COL_RED
+        autoBtn.Text = "Auto: OFF"
+    end
+end)
