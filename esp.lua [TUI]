@@ -1,12 +1,17 @@
 local Players = game:GetService("Players")
-local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local UserInputService = game:GetService("UserInputService")
 
 local player = Players.LocalPlayer
 local playerGui = player:WaitForChild("PlayerGui")
 
--- Remote for tool storage (same one used by TrollMenu)
-local remote = ReplicatedStorage:FindFirstChild("ToolRestorationEvent")
+-- BindableEvent в TrollMenu для отправки запросов на хранение
+local function getStoreRequest()
+    local trollMenu = playerGui:FindFirstChild("TrollMenu")
+    if trollMenu then
+        return trollMenu:FindFirstChild("StoreRequest")
+    end
+    return nil
+end
 
 -- Colors
 local COL_BG     = Color3.fromRGB(22, 24, 30)
@@ -348,8 +353,9 @@ end
 -- Store the held tool into TrollMenu slot slotIndex
 local function storeToSlot(slotIndex)
     local held = getHeldTool()
-    if held and remote then
-        remote:FireServer("store", { tool = held, slot = slotIndex })
+    local storeRequest = getStoreRequest()
+    if held and storeRequest then
+        storeRequest:Fire(slotIndex)
         return true
     end
     return false
